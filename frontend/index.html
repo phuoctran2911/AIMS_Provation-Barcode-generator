@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Provation Barcode Label Generator v2</title>
+<style>
+  :root { font-family: Arial, Helvetica, sans-serif; color:#111; }
+  body { margin:0; background:#f3f4f6; }
+  header { background:#1f2937; color:white; padding:18px 28px; }
+  h1 { margin:0 0 4px; font-size:23px; }
+  main { max-width:1200px; margin:22px auto; padding:0 16px; }
+  .panel { background:white; border-radius:14px; padding:18px; box-shadow:0 2px 12px #0001; margin-bottom:18px; }
+  button, input[type=file]::file-selector-button { border:0; border-radius:8px; padding:10px 14px; background:#1f6feb; color:white; font-weight:700; cursor:pointer; margin:4px; }
+  button.secondary { background:#59636e; } button.danger { background:#b42318; }
+  input, select { padding:9px; border:1px solid #bbb; border-radius:7px; font-size:14px; }
+  #apiKey { width:310px; }
+  label.ai { display:inline-flex; align-items:center; gap:7px; padding:8px 10px; background:#eff6ff; border-radius:10px; }
+  .toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .hint, .small { color:#555; font-size:13px; }
+  .warn { color:#8a4b00; background:#fff8e1; padding:8px 10px; border-radius:8px; margin-top:8px; display:inline-block; }
+  .ok { color:#14532d; background:#eaf7ea; padding:8px 10px; border-radius:8px; margin-top:8px; display:inline-block; }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { border:1px solid #ddd; padding:6px; text-align:left; }
+  th { background:#f0f2f5; }
+  td input { width:100%; box-sizing:border-box; border:0; padding:7px; }
+
+  /* A4, 8 labels/page: 2 columns x 4 rows */
+  .sheet {
+    width:210mm;
+    height:297mm;
+    background:white;
+    margin:0 auto 18px;
+    padding:10mm;
+    box-sizing:border-box;
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    grid-template-rows:repeat(4, 1fr);
+    gap:6mm 7mm;
+    box-shadow:0 1px 8px #0002;
+  }
+  .label {
+    border:1.4px dashed #c7c7c7;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:flex-start;
+    position:relative;
+    overflow:hidden;
+    padding:6mm 5mm 8mm;
+    box-sizing:border-box;
+  }
+  .logo { width:43mm; max-height:12mm; object-fit:contain; margin-bottom:3mm; flex:0 0 auto; }
+  .barcode {
+    width:100%;
+    max-width:78mm;
+    height:18mm;
+    object-fit:fill;
+    display:block;
+    margin:0 0 5mm 0;
+    flex:0 0 auto;
+  }
+  .name {
+    width:100%;
+    text-align:center;
+    font-weight:900;
+    line-height:1.05;
+    white-space:nowrap;
+    overflow:visible;
+    margin:0;
+    letter-spacing:-0.5px;
+    flex:0 0 auto;
+  }
+  .fh { position:absolute; right:4mm; bottom:3mm; color:#666; font-weight:800; font-size:13px; }
+  .empty { color:#999; font-style:italic; }
+
+  @media print {
+    body { background:white; }
+    header, .controls, .editor, .no-print, .hint { display:none !important; }
+    main { max-width:none; margin:0; padding:0; }
+    .panel.preview { box-shadow:none; padding:0; margin:0; }
+    .sheet { box-shadow:none; margin:0; page-break-after:always; }
+    @page { size:A4 portrait; margin:0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Provation Barcode Label Generator v2</h1>
+  <div>AI extraction + real Code 128 barcodes + A4 8 labels/page</div>
+</header>
+<main>
+  <section class="panel controls">
+    <div class="toolbar">
+      <input id="file" type="file" accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff" />
+      <label class="ai"><input id="useAI" type="checkbox" checked> Use AI extraction</label>
+      <input id="apiKey" type="password" placeholder="OpenAI API key (optional if .env set)" autocomplete="off">
+      <input id="model" value="gpt-4.1-mini" style="width:135px" title="OpenAI model">
+      <button onclick="uploadFile()">Extract from file/photo</button>
+      <button class="secondary" onclick="loadSample()">Load sample</button>
+      <button onclick="addRow()">Add row</button>
+      <button class="secondary" onclick="renderLabels()">Refresh preview</button>
+      <button onclick="window.print()">Print / Save PDF</button>
+    </div>
+    <p class="hint">Review the table before printing. Barcodes are generated from the Name field, not copied from screenshots.</p>
+    <div id="status" class="small"></div>
+  </section>
+
+  <section class="panel editor">
+    <h2>Review extracted data</h2>
+    <table id="dataTable">
+      <thead><tr><th>Location</th><th>Neuron Name / Barcode Data</th><th>FH Asset #</th><th>Serial</th><th>MAC</th><th>Confidence / Notes</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="panel preview">
+    <h2 class="no-print">Preview</h2>
+    <div id="sheets"></div>
+  </section>
+</main>
+<script>
+let labels = [];
+const logoUrl = '/assets/provation_logo_crop.png';
+const perPage = 8;
+
+function normalizeName(v){ return String(v||'').trim().toUpperCase().replace(/\s+/g,'').replace(/[^A-Z0-9-]/g,''); }
+function normalizeFH(v){ v=String(v||'').trim().toUpperCase().replace(/\s+/g,'').replace(/-/g,''); if(v && !v.startsWith('FH')) v='FH'+v.replace(/\D/g,''); return v; }
+function escapeHtml(s){ return String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fontSizeForName(name){
+  const n = normalizeName(name).length;
+  if(n>26) return 15;
+  if(n>22) return 17;
+  if(n>18) return 19;
+  if(n>15) return 21;
+  if(n>12) return 24;
+  return 27;
+}
+
+async function uploadFile(){
+  const f = document.getElementById('file').files[0];
+  if(!f){ alert('Choose a file first.'); return; }
+  const fd = new FormData();
+  fd.append('file', f);
+  fd.append('use_ai', document.getElementById('useAI').checked ? 'true':'false');
+  fd.append('api_key', document.getElementById('apiKey').value.trim());
+  fd.append('model', document.getElementById('model').value.trim() || 'gpt-4.1-mini');
+  document.getElementById('status').innerHTML = 'Extracting... AI can take 10–30 seconds for photos/PDFs.';
+  const res = await fetch('/extract', {method:'POST', body:fd});
+  if(!res.ok){ alert(await res.text()); return; }
+  const data = await res.json();
+  if(data.ai_error && !(data.ai_labels && data.ai_labels.length)) alert('AI extraction failed, using OCR fallback if available. Error: '+data.ai_error);
+  labels = data.labels || [];
+  document.getElementById('status').innerHTML = (data.ai_labels && data.ai_labels.length)
+    ? `<span class="ok">AI extracted ${data.ai_labels.length} label(s). Review FH numbers before printing.</span>`
+    : `<span class="warn">Using OCR/regex extraction. Verify FH numbers carefully.</span>`;
+  if(labels.length === 0) alert('No labels found. Try a clearer photo/PDF or add rows manually.');
+  drawTable(); renderLabels();
+}
+
+async function loadSample(){ const res = await fetch('/sample', {method:'POST'}); labels=(await res.json()).labels; drawTable(); renderLabels(); }
+function addRow(){ labels.push({location:'', name:'', fh:'', serial:'', mac:'', confidence:'', notes:''}); drawTable(); renderLabels(); }
+function deleteRow(i){ labels.splice(i,1); drawTable(); renderLabels(); }
+function updateCell(i,k,v){ labels[i][k] = (k==='name') ? normalizeName(v) : (k==='fh' ? normalizeFH(v) : v); renderLabels(); }
+function confidenceText(r){ const n = r.notes || ''; if(r.confidence===undefined || r.confidence===null || r.confidence==='') return escapeHtml(n); const pct=Math.round(Number(r.confidence)*100); return escapeHtml((isNaN(pct)?r.confidence:pct+'%') + (n ? ' - '+n : '')); }
+
+function drawTable(){
+  const tbody = document.querySelector('#dataTable tbody'); tbody.innerHTML = '';
+  labels.forEach((r,i)=>{
+    tbody.insertAdjacentHTML('beforeend', `<tr>
+      <td><input value="${escapeHtml(r.location)}" oninput="updateCell(${i},'location',this.value)"></td>
+      <td><input value="${escapeHtml(r.name)}" oninput="updateCell(${i},'name',this.value)"></td>
+      <td><input value="${escapeHtml(r.fh)}" oninput="updateCell(${i},'fh',this.value)"></td>
+      <td><input value="${escapeHtml(r.serial)}" oninput="updateCell(${i},'serial',this.value)"></td>
+      <td><input value="${escapeHtml(r.mac)}" oninput="updateCell(${i},'mac',this.value)"></td>
+      <td class="small">${confidenceText(r)}</td>
+      <td><button class="danger" onclick="deleteRow(${i})">Delete</button></td>
+    </tr>`);
+  });
+}
+
+function renderLabels(){
+  const container = document.getElementById('sheets'); container.innerHTML = '';
+  const valid = labels.filter(r => normalizeName(r.name));
+  if(valid.length === 0){ container.innerHTML = '<p class="empty">No labels yet.</p>'; return; }
+  const pages = Math.ceil(valid.length / perPage);
+  for(let p=0; p<pages; p++){
+    const sheet = document.createElement('div'); sheet.className='sheet'; container.appendChild(sheet);
+    valid.slice(p*perPage, (p+1)*perPage).forEach(r => {
+      const name = normalizeName(r.name), fh = normalizeFH(r.fh);
+      const label = document.createElement('div'); label.className='label';
+      label.innerHTML = `<img class="logo" src="${logoUrl}">
+        <img class="barcode" src="/barcode.svg?data=${encodeURIComponent(name)}" alt="barcode ${escapeHtml(name)}">
+        <div class="name" style="font-size:${fontSizeForName(name)}px">${escapeHtml(name)}</div>
+        <div class="fh">${escapeHtml(fh)}</div>`;
+      sheet.appendChild(label);
+    });
+  }
+}
+
+fetch('/ai-status').then(r=>r.json()).then(s=>{
+  document.getElementById('status').innerHTML = s.has_env_key
+    ? '<span class="ok">OpenAI API key found from .env.</span>'
+    : 'Paste OpenAI API key here, or create .env with OPENAI_API_KEY.';
+}).catch(()=>{});
+loadSample();
+</script>
+</body>
+</html>
