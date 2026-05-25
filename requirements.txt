@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+python-dotenv
+openai
+pandas
+openpyxl
+pdfplumber
+PyMuPDF
+Pillow
+pytesseract
+python-barcode
