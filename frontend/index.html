@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#1E3A5F" />
 <title>Provation Barcode Label Generator v2</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231E3A5F'/%3E%3Cg fill='white'%3E%3Crect x='7' y='9' width='2' height='14'/%3E%3Crect x='11' y='9' width='1.5' height='14'/%3E%3Crect x='14' y='9' width='3' height='14'/%3E%3Crect x='19' y='9' width='1.5' height='14'/%3E%3Crect x='22' y='9' width='2.5' height='14'/%3E%3C/g%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -200,6 +201,36 @@
     font-size:14.5px; border:1.5px dashed var(--color-border); border-radius:var(--radius); text-align:center; font-family:var(--font-ui); }
   .empty svg { opacity:.45; }
 
+  /* ---- Mobile (phones) ---- */
+  @media (max-width: 700px) {
+    header { padding:16px 18px; }
+    main { margin:14px auto; padding:0 12px; }
+    .panel { padding:14px; border-radius:12px; }
+    .toolbar { align-items:stretch; }
+    .toolbar .grow { flex-basis:100%; }
+    .toolbar button { flex:1 1 100%; }
+    .step-heading { flex-wrap:wrap; gap:8px; }
+    .step-heading button { flex:1 1 45%; }
+    details.ai-settings .ai-body { flex-direction:column; align-items:stretch; }
+    #apiKey, #model { width:100%; }
+    .margins .field { flex:1 1 29%; }
+    .margins .field input[type=number] { width:100%; }
+    .margins button { flex:1 1 100%; }
+
+    /* Review table becomes device cards */
+    .table-scroll { border:0; overflow:visible; }
+    table, tbody, tr, td { display:block; width:100%; }
+    thead { display:none; }
+    tbody tr { border:1.5px solid var(--color-border); border-radius:var(--radius); margin-bottom:12px; padding:10px 12px; background:var(--color-surface); }
+    tbody tr:nth-child(even), tbody tr:hover { background:var(--color-surface); }
+    td { border:0; padding:6px 0; }
+    td[data-label]::before { content:attr(data-label); display:block; font-size:11.5px; font-weight:700; color:var(--color-muted-text); text-transform:uppercase; letter-spacing:.4px; margin-bottom:3px; }
+    td input { border-color:var(--color-border); }
+    td.small:empty { display:none; }
+    td button.danger { width:100%; min-height:44px; }
+    td.empty-row { padding:20px 8px; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     * { transition:none !important; animation:none !important; }
     .progress-fill.indeterminate { width:100%; margin-left:0; opacity:.55; }
@@ -210,7 +241,9 @@
     header, .controls, .editor, .no-print, .hint { display:none !important; }
     main { max-width:none; margin:0; padding:0; }
     .panel.preview { box-shadow:none; border:0; padding:0; margin:0; }
-    .sheet-scroll { overflow:visible; padding:0; }
+    .sheet-scroll { overflow:visible; padding:0; height:auto !important; }
+    /* undo the screen-only fit-to-width scaling so printed output is always full size */
+    #sheets { transform:none !important; width:auto !important; }
     .sheet { box-shadow:none; margin:0; page-break-after:always; }
     @page { size:A4 portrait; margin:0; }
   }
@@ -237,7 +270,7 @@
     <div class="toolbar">
       <label class="field grow">
         <span>Device list or photo (Excel, CSV, PDF, or image)</span>
-        <input id="file" type="file" accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff" />
+        <input id="file" type="file" accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,image/*" />
       </label>
       <button id="extractBtn" class="accent" onclick="uploadFile()">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -346,23 +379,46 @@ let appliedFh = 0;
 
 function maxSafeFh(requested){
   let allowed = requested;
-  const gapPx = FH_GAP_MM * MM_TO_PX;
   document.querySelectorAll('.label').forEach(label => {
     const name = label.querySelector('.name');
     const fh = label.querySelector('.fh');
     if(!name || !fh || !fh.textContent.trim()) return;
+    // the preview may be scaled down to fit small screens — measure in scaled px
+    const sheet = label.closest('.sheet');
+    const pxPerMm = MM_TO_PX * (sheet && sheet.offsetWidth ? sheet.getBoundingClientRect().width / sheet.offsetWidth : 1);
+    const gapPx = FH_GAP_MM * pxPerMm;
     const n = name.getBoundingClientRect();
     const f = fh.getBoundingClientRect();
     if(!n.width || !f.width) return;
     const horizontalOverlap = (f.left < n.right + gapPx) && (f.right > n.left - gapPx);
     if(!horizontalOverlap) return; // short name: FH may rise beside it
-    const fhTopAtZero = f.top + appliedFh * MM_TO_PX; // fh is currently rendered at appliedFh
+    const fhTopAtZero = f.top + appliedFh * pxPerMm; // fh is currently rendered at appliedFh
     const maxRaisePx = fhTopAtZero - (n.bottom + gapPx);
-    const maxRaiseMm = Math.floor((maxRaisePx / MM_TO_PX) * 2) / 2; // round down to 0.5mm
+    const maxRaiseMm = Math.floor((maxRaisePx / pxPerMm) * 2) / 2; // round down to 0.5mm
     if(maxRaiseMm < allowed) allowed = maxRaiseMm;
   });
   return Math.max(MARGIN_LIMITS.fh[0], allowed);
 }
+
+/* ---- Fit-to-width preview scaling (screen only; print always full size) ---- */
+function fitPreview(){
+  const scroll = document.querySelector('.sheet-scroll');
+  const sheets = document.getElementById('sheets');
+  const first = sheets.querySelector('.sheet');
+  if(!first){ sheets.style.transform=''; sheets.style.width=''; scroll.style.height=''; return; }
+  sheets.style.transform=''; sheets.style.width=''; scroll.style.height='';
+  const avail = scroll.clientWidth;
+  const sheetW = first.offsetWidth;
+  if(avail >= sheetW) return; // fits natively — no scaling
+  const scale = avail / sheetW;
+  sheets.style.transformOrigin = 'top left';
+  sheets.style.width = sheetW + 'px';
+  const fullH = sheets.offsetHeight;
+  sheets.style.transform = `scale(${scale})`;
+  scroll.style.height = Math.ceil(fullH * scale) + 'px';
+}
+let fitTimer = null;
+window.addEventListener('resize', () => { clearTimeout(fitTimer); fitTimer = setTimeout(fitPreview, 150); });
 
 function applyMargins(save=true){
   const m = currentMargins();
@@ -487,11 +543,11 @@ function drawTable(){
   }
   labels.forEach((r,i)=>{
     tbody.insertAdjacentHTML('beforeend', `<tr>
-      <td><input aria-label="Location, row ${i+1}" value="${escapeHtml(r.location)}" oninput="updateCell(${i},'location',this.value)"></td>
-      <td><input aria-label="Neuron name, row ${i+1}" value="${escapeHtml(r.name)}" oninput="updateCell(${i},'name',this.value)"></td>
-      <td><input aria-label="FH asset number, row ${i+1}" value="${escapeHtml(r.fh)}" oninput="updateCell(${i},'fh',this.value)"></td>
-      <td><input aria-label="Serial, row ${i+1}" value="${escapeHtml(r.serial)}" oninput="updateCell(${i},'serial',this.value)"></td>
-      <td><input aria-label="MAC address, row ${i+1}" value="${escapeHtml(r.mac)}" oninput="updateCell(${i},'mac',this.value)"></td>
+      <td data-label="Location"><input aria-label="Location, row ${i+1}" value="${escapeHtml(r.location)}" oninput="updateCell(${i},'location',this.value)"></td>
+      <td data-label="Neuron name / barcode"><input aria-label="Neuron name, row ${i+1}" value="${escapeHtml(r.name)}" oninput="updateCell(${i},'name',this.value)"></td>
+      <td data-label="FH asset #"><input aria-label="FH asset number, row ${i+1}" value="${escapeHtml(r.fh)}" oninput="updateCell(${i},'fh',this.value)"></td>
+      <td data-label="Serial"><input aria-label="Serial, row ${i+1}" value="${escapeHtml(r.serial)}" oninput="updateCell(${i},'serial',this.value)"></td>
+      <td data-label="MAC"><input aria-label="MAC address, row ${i+1}" value="${escapeHtml(r.mac)}" oninput="updateCell(${i},'mac',this.value)"></td>
       <td class="small">${confidenceText(r)}</td>
       <td><button class="danger" onclick="deleteRow(${i})" aria-label="Delete row ${i+1}">Delete</button></td>
     </tr>`);
@@ -509,6 +565,7 @@ function renderLabels(){
       <span>Upload a file or photo in step 1, click “Load sample”, or add rows manually in step 2.</span>
     </div>`;
     hideProgress();
+    fitPreview();
     return;
   }
   const pages = Math.ceil(valid.length / perPage);
@@ -524,6 +581,7 @@ function renderLabels(){
       sheet.appendChild(label);
     });
   }
+  fitPreview();
   trackGenerationProgress(container);
 }
 
@@ -544,6 +602,7 @@ function trackGenerationProgress(container){
     done++;
     if(done >= total){
       setProgress(100, `Done — ${total} label${total>1?'s':''} generated ✓`, true);
+      fitPreview();
       applyMargins(false); // re-check FH/name clearance now that layout is final
     } else {
       setProgress(Math.round(done/total*100), `Generating barcodes… ${done} / ${total}`);
