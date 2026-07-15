@@ -20,6 +20,16 @@
   .hint, .small { color:#555; font-size:13px; }
   .warn { color:#8a4b00; background:#fff8e1; padding:8px 10px; border-radius:8px; margin-top:8px; display:inline-block; }
   .ok { color:#14532d; background:#eaf7ea; padding:8px 10px; border-radius:8px; margin-top:8px; display:inline-block; }
+  .margins { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; padding:8px 10px; background:#f0f4ff; border-radius:10px; }
+  .margins label { display:inline-flex; align-items:center; gap:5px; font-size:13px; font-weight:600; }
+  .margins input[type=number] { width:64px; padding:6px; }
+  .progress-wrap { display:none; margin-top:10px; }
+  .progress-wrap.active { display:block; }
+  .progress-track { height:10px; background:#e5e7eb; border-radius:6px; overflow:hidden; }
+  .progress-fill { height:100%; width:0%; background:#1f6feb; border-radius:6px; transition:width .2s; }
+  .progress-fill.indeterminate { width:35%; animation:progress-slide 1.2s linear infinite; }
+  @keyframes progress-slide { 0% { margin-left:-35%; } 100% { margin-left:100%; } }
+  .progress-text { font-size:13px; font-weight:600; color:#333; margin-top:4px; }
   table { border-collapse:collapse; width:100%; font-size:14px; }
   th, td { border:1px solid #ddd; padding:6px; text-align:left; }
   th { background:#f0f2f5; }
@@ -57,7 +67,11 @@
     height:18mm;
     object-fit:fill;
     display:block;
-    margin:0 0 5mm 0;
+    /* margins adjustable via the toolbar; barcode size itself never changes.
+       top/bottom are real margins; left/right shift the centered barcode by the exact amount */
+    margin:var(--bc-mt,0mm) 0 var(--bc-mb,5mm) 0;
+    position:relative;
+    left:calc(var(--bc-ml,0mm) - var(--bc-mr,0mm));
     flex:0 0 auto;
   }
   .name {
@@ -102,8 +116,21 @@
       <button class="secondary" onclick="renderLabels()">Refresh preview</button>
       <button onclick="window.print()">Print / Save PDF</button>
     </div>
+    <div class="margins">
+      <span>Barcode margins (mm):</span>
+      <label>Top <input id="m_top" type="number" min="-10" max="15" step="0.5" oninput="applyMargins()" onchange="normalizeMarginInputs()"></label>
+      <label>Right <input id="m_right" type="number" min="-10" max="15" step="0.5" oninput="applyMargins()" onchange="normalizeMarginInputs()"></label>
+      <label>Bottom <input id="m_bottom" type="number" min="-10" max="15" step="0.5" oninput="applyMargins()" onchange="normalizeMarginInputs()"></label>
+      <label>Left <input id="m_left" type="number" min="-10" max="15" step="0.5" oninput="applyMargins()" onchange="normalizeMarginInputs()"></label>
+      <button class="secondary" onclick="resetMargins()">Reset margins</button>
+      <span class="small">Moves the barcode inside each label — barcode size, fonts, and 8 labels/page stay the same.</span>
+    </div>
     <p class="hint">Review the table before printing. Barcodes are generated from the Name field, not copied from screenshots.</p>
     <div id="status" class="small"></div>
+    <div id="progressWrap" class="progress-wrap">
+      <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
+      <div id="progressText" class="progress-text"></div>
+    </div>
   </section>
 
   <section class="panel editor">
@@ -123,6 +150,62 @@
 let labels = [];
 const logoUrl = '/assets/provation_logo_crop.png';
 const perPage = 8;
+
+/* ---- Barcode margin controls ---- */
+const MARGIN_DEFAULTS = {top:0, right:0, bottom:5, left:0};
+const MARGIN_KEYS = ['top','right','bottom','left'];
+const MARGIN_MIN = -10, MARGIN_MAX = 15;
+
+function clampMargin(v){
+  v = parseFloat(v);
+  if(isNaN(v)) v = 0;
+  return Math.min(MARGIN_MAX, Math.max(MARGIN_MIN, v));
+}
+function currentMargins(){
+  const m = {};
+  MARGIN_KEYS.forEach(k => m[k] = clampMargin(document.getElementById('m_'+k).value));
+  return m;
+}
+function applyMargins(save=true){
+  const m = currentMargins();
+  const s = document.documentElement.style;
+  s.setProperty('--bc-mt', m.top+'mm');
+  s.setProperty('--bc-mr', m.right+'mm');
+  s.setProperty('--bc-mb', m.bottom+'mm');
+  s.setProperty('--bc-ml', m.left+'mm');
+  if(save){ try{ localStorage.setItem('bcMargins', JSON.stringify(m)); }catch(e){} }
+}
+function normalizeMarginInputs(){
+  MARGIN_KEYS.forEach(k => { const el = document.getElementById('m_'+k); el.value = clampMargin(el.value); });
+  applyMargins();
+}
+function resetMargins(){
+  MARGIN_KEYS.forEach(k => document.getElementById('m_'+k).value = MARGIN_DEFAULTS[k]);
+  applyMargins();
+}
+function initMargins(){
+  let m = {...MARGIN_DEFAULTS};
+  try{ m = {...m, ...(JSON.parse(localStorage.getItem('bcMargins')) || {})}; }catch(e){}
+  MARGIN_KEYS.forEach(k => document.getElementById('m_'+k).value = clampMargin(m[k]));
+  applyMargins(false);
+}
+
+/* ---- Progress bar ---- */
+let progressHideTimer = null;
+function setProgress(pct, text, done=false){
+  clearTimeout(progressHideTimer);
+  document.getElementById('progressWrap').classList.add('active');
+  const fill = document.getElementById('progressFill');
+  fill.classList.toggle('indeterminate', pct === null);
+  fill.style.width = (pct === null) ? '' : pct + '%';
+  fill.style.background = done ? '#16a34a' : '#1f6feb';
+  document.getElementById('progressText').textContent = text;
+  if(done) progressHideTimer = setTimeout(hideProgress, 3000);
+}
+function hideProgress(){
+  clearTimeout(progressHideTimer);
+  document.getElementById('progressWrap').classList.remove('active');
+}
 
 function normalizeName(v){ return String(v||'').trim().toUpperCase().replace(/\s+/g,'').replace(/[^A-Z0-9-]/g,''); }
 function normalizeFH(v){ v=String(v||'').trim().toUpperCase().replace(/\s+/g,'').replace(/-/g,''); if(v && !v.startsWith('FH')) v='FH'+v.replace(/\D/g,''); return v; }
@@ -146,8 +229,14 @@ async function uploadFile(){
   fd.append('api_key', document.getElementById('apiKey').value.trim());
   fd.append('model', document.getElementById('model').value.trim() || 'gpt-4.1-mini');
   document.getElementById('status').innerHTML = 'Extracting... AI can take 10–30 seconds for photos/PDFs.';
-  const res = await fetch('/extract', {method:'POST', body:fd});
-  if(!res.ok){ alert(await res.text()); return; }
+  setProgress(null, 'Extracting data from file… AI can take 10–30 seconds.');
+  let res;
+  try {
+    res = await fetch('/extract', {method:'POST', body:fd});
+  } catch(e) {
+    hideProgress(); alert('Extraction failed: ' + e); return;
+  }
+  if(!res.ok){ hideProgress(); alert(await res.text()); return; }
   const data = await res.json();
   if(data.ai_error && !(data.ai_labels && data.ai_labels.length)) alert('AI extraction failed, using OCR fallback if available. Error: '+data.ai_error);
   labels = data.labels || [];
@@ -179,10 +268,15 @@ function drawTable(){
   });
 }
 
+let renderToken = 0;
 function renderLabels(){
   const container = document.getElementById('sheets'); container.innerHTML = '';
   const valid = labels.filter(r => normalizeName(r.name));
-  if(valid.length === 0){ container.innerHTML = '<p class="empty">No labels yet.</p>'; return; }
+  if(valid.length === 0){
+    container.innerHTML = '<p class="empty">No labels yet — upload a file/photo above, click "Load sample", or add rows manually.</p>';
+    hideProgress();
+    return;
+  }
   const pages = Math.ceil(valid.length / perPage);
   for(let p=0; p<pages; p++){
     const sheet = document.createElement('div'); sheet.className='sheet'; container.appendChild(sheet);
@@ -196,6 +290,35 @@ function renderLabels(){
       sheet.appendChild(label);
     });
   }
+  trackGenerationProgress(container);
+}
+
+function trackGenerationProgress(container){
+  const token = ++renderToken;
+  const imgs = [...container.querySelectorAll('img.barcode')];
+  const total = imgs.length;
+  let done = imgs.filter(img => img.complete).length;
+  if(done >= total){
+    // everything was already cached; show a brief Done state
+    setProgress(100, `Done — ${total} label${total>1?'s':''} generated ✓`, true);
+    return;
+  }
+  setProgress(Math.round(done/total*100), `Generating barcodes… ${done} / ${total}`);
+  const tick = () => {
+    if(token !== renderToken) return; // a newer render superseded this one
+    done++;
+    if(done >= total){
+      setProgress(100, `Done — ${total} label${total>1?'s':''} generated ✓`, true);
+    } else {
+      setProgress(Math.round(done/total*100), `Generating barcodes… ${done} / ${total}`);
+    }
+  };
+  imgs.forEach(img => {
+    if(!img.complete){
+      img.addEventListener('load', tick, {once:true});
+      img.addEventListener('error', tick, {once:true});
+    }
+  });
 }
 
 fetch('/ai-status').then(r=>r.json()).then(s=>{
@@ -203,7 +326,8 @@ fetch('/ai-status').then(r=>r.json()).then(s=>{
     ? '<span class="ok">OpenAI API key found from .env.</span>'
     : 'Paste OpenAI API key here, or create .env with OPENAI_API_KEY.';
 }).catch(()=>{});
-loadSample();
+initMargins();
+renderLabels();
 </script>
 </body>
 </html>

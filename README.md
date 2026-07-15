@@ -2,6 +2,12 @@
 
 A4 web app with 8 labels per page, AI extraction, `.env` key support, and improved spacing so the barcode text does not touch the barcode.
 
+## Features
+
+- **Adjustable barcode margins** — top/right/bottom/left controls (in mm) move the barcode inside each label. Barcode size, fonts, and the 8-labels-per-page layout never change. Settings persist in the browser.
+- **Generation progress bar** — shows extraction progress and a per-barcode "X / N … Done ✓" counter so you know when the sheet is ready to print.
+- Starts empty — use **Load sample** if you want example labels.
+
 ## Run
 
 ```bash
