@@ -125,6 +125,7 @@
       <label>Left <input id="m_left" type="number" min="-10" max="15" step="0.5" oninput="applyMargins()" onchange="normalizeMarginInputs()"></label>
       <label>FH ↑/↓ <input id="m_fh" type="number" min="-3" max="55" step="0.5" oninput="applyMargins()" onchange="normalizeMarginInputs()"></label>
       <button class="secondary" onclick="resetMargins()">Reset margins</button>
+      <span id="fhCapNote" class="small" style="display:none; color:#8a4b00; background:#fff8e1; padding:4px 8px; border-radius:6px; font-weight:700"></span>
       <span class="small">Margins move the barcode; FH ↑/↓ raises the FH number (positive = up) so empty label space can be cut off. Barcode size, fonts, and 8 labels/page stay the same.</span>
     </div>
     <p class="hint">Review the table before printing. Barcodes are generated from the Name field, not copied from screenshots.</p>
@@ -169,6 +170,34 @@ function currentMargins(){
   MARGIN_KEYS.forEach(k => m[k] = clampMargin(k, document.getElementById('m_'+k).value));
   return m;
 }
+
+/* Safeguard: the FH number must never touch a Neuron name.
+   Measures every rendered label and returns the largest raise <= requested
+   that keeps FH_GAP_MM clearance below any name it horizontally overlaps. */
+const FH_GAP_MM = 2;
+const MM_TO_PX = 96 / 25.4;
+let appliedFh = 0;
+
+function maxSafeFh(requested){
+  let allowed = requested;
+  const gapPx = FH_GAP_MM * MM_TO_PX;
+  document.querySelectorAll('.label').forEach(label => {
+    const name = label.querySelector('.name');
+    const fh = label.querySelector('.fh');
+    if(!name || !fh || !fh.textContent.trim()) return;
+    const n = name.getBoundingClientRect();
+    const f = fh.getBoundingClientRect();
+    if(!n.width || !f.width) return;
+    const horizontalOverlap = (f.left < n.right + gapPx) && (f.right > n.left - gapPx);
+    if(!horizontalOverlap) return; // short name: FH may rise beside it
+    const fhTopAtZero = f.top + appliedFh * MM_TO_PX; // fh is currently rendered at appliedFh
+    const maxRaisePx = fhTopAtZero - (n.bottom + gapPx);
+    const maxRaiseMm = Math.floor((maxRaisePx / MM_TO_PX) * 2) / 2; // round down to 0.5mm
+    if(maxRaiseMm < allowed) allowed = maxRaiseMm;
+  });
+  return Math.max(MARGIN_LIMITS.fh[0], allowed);
+}
+
 function applyMargins(save=true){
   const m = currentMargins();
   const s = document.documentElement.style;
@@ -176,7 +205,16 @@ function applyMargins(save=true){
   s.setProperty('--bc-mr', m.right+'mm');
   s.setProperty('--bc-mb', m.bottom+'mm');
   s.setProperty('--bc-ml', m.left+'mm');
-  s.setProperty('--fh-up', m.fh+'mm');
+  const safeFh = maxSafeFh(m.fh); // measured after barcode vars so name positions are current
+  s.setProperty('--fh-up', safeFh+'mm');
+  appliedFh = safeFh;
+  const note = document.getElementById('fhCapNote');
+  if(safeFh < m.fh){
+    note.textContent = `FH held at ${safeFh}mm — it can't touch the Neuron name (${FH_GAP_MM}mm clearance kept)`;
+    note.style.display = 'inline-block';
+  } else {
+    note.style.display = 'none';
+  }
   if(save){ try{ localStorage.setItem('bcMargins', JSON.stringify(m)); }catch(e){} }
 }
 function normalizeMarginInputs(){
@@ -305,6 +343,7 @@ function trackGenerationProgress(container){
   if(done >= total){
     // everything was already cached; show a brief Done state
     setProgress(100, `Done — ${total} label${total>1?'s':''} generated ✓`, true);
+    applyMargins(false); // re-check FH/name clearance now that layout is final
     return;
   }
   setProgress(Math.round(done/total*100), `Generating barcodes… ${done} / ${total}`);
@@ -313,6 +352,7 @@ function trackGenerationProgress(container){
     done++;
     if(done >= total){
       setProgress(100, `Done — ${total} label${total>1?'s':''} generated ✓`, true);
+      applyMargins(false); // re-check FH/name clearance now that layout is final
     } else {
       setProgress(Math.round(done/total*100), `Generating barcodes… ${done} / ${total}`);
     }
