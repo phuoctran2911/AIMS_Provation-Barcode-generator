@@ -85,7 +85,8 @@
     letter-spacing:-0.5px;
     flex:0 0 auto;
   }
-  .fh { position:absolute; right:4mm; bottom:3mm; color:#666; font-weight:800; font-size:13px; }
+  /* FH number position adjustable via the toolbar (positive --fh-up raises it) */
+  .fh { position:absolute; right:4mm; bottom:calc(3mm + var(--fh-up,0mm)); color:#666; font-weight:800; font-size:13px; }
   .empty { color:#999; font-style:italic; }
 
   @media print {
@@ -122,8 +123,9 @@
       <label>Right <input id="m_right" type="number" min="-10" max="15" step="0.5" oninput="applyMargins()" onchange="normalizeMarginInputs()"></label>
       <label>Bottom <input id="m_bottom" type="number" min="-10" max="15" step="0.5" oninput="applyMargins()" onchange="normalizeMarginInputs()"></label>
       <label>Left <input id="m_left" type="number" min="-10" max="15" step="0.5" oninput="applyMargins()" onchange="normalizeMarginInputs()"></label>
+      <label>FH ↑/↓ <input id="m_fh" type="number" min="-3" max="55" step="0.5" oninput="applyMargins()" onchange="normalizeMarginInputs()"></label>
       <button class="secondary" onclick="resetMargins()">Reset margins</button>
-      <span class="small">Moves the barcode inside each label — barcode size, fonts, and 8 labels/page stay the same.</span>
+      <span class="small">Margins move the barcode; FH ↑/↓ raises the FH number (positive = up) so empty label space can be cut off. Barcode size, fonts, and 8 labels/page stay the same.</span>
     </div>
     <p class="hint">Review the table before printing. Barcodes are generated from the Name field, not copied from screenshots.</p>
     <div id="status" class="small"></div>
@@ -151,19 +153,20 @@ let labels = [];
 const logoUrl = '/assets/provation_logo_crop.png';
 const perPage = 8;
 
-/* ---- Barcode margin controls ---- */
-const MARGIN_DEFAULTS = {top:0, right:0, bottom:5, left:0};
-const MARGIN_KEYS = ['top','right','bottom','left'];
-const MARGIN_MIN = -10, MARGIN_MAX = 15;
+/* ---- Barcode margin + FH position controls ---- */
+const MARGIN_DEFAULTS = {top:0, right:0, bottom:5, left:0, fh:0};
+const MARGIN_LIMITS = {top:[-10,15], right:[-10,15], bottom:[-10,15], left:[-10,15], fh:[-3,55]};
+const MARGIN_KEYS = Object.keys(MARGIN_DEFAULTS);
 
-function clampMargin(v){
+function clampMargin(k, v){
   v = parseFloat(v);
-  if(isNaN(v)) v = 0;
-  return Math.min(MARGIN_MAX, Math.max(MARGIN_MIN, v));
+  if(isNaN(v)) v = MARGIN_DEFAULTS[k];
+  const [lo, hi] = MARGIN_LIMITS[k];
+  return Math.min(hi, Math.max(lo, v));
 }
 function currentMargins(){
   const m = {};
-  MARGIN_KEYS.forEach(k => m[k] = clampMargin(document.getElementById('m_'+k).value));
+  MARGIN_KEYS.forEach(k => m[k] = clampMargin(k, document.getElementById('m_'+k).value));
   return m;
 }
 function applyMargins(save=true){
@@ -173,10 +176,11 @@ function applyMargins(save=true){
   s.setProperty('--bc-mr', m.right+'mm');
   s.setProperty('--bc-mb', m.bottom+'mm');
   s.setProperty('--bc-ml', m.left+'mm');
+  s.setProperty('--fh-up', m.fh+'mm');
   if(save){ try{ localStorage.setItem('bcMargins', JSON.stringify(m)); }catch(e){} }
 }
 function normalizeMarginInputs(){
-  MARGIN_KEYS.forEach(k => { const el = document.getElementById('m_'+k); el.value = clampMargin(el.value); });
+  MARGIN_KEYS.forEach(k => { const el = document.getElementById('m_'+k); el.value = clampMargin(k, el.value); });
   applyMargins();
 }
 function resetMargins(){
@@ -186,7 +190,7 @@ function resetMargins(){
 function initMargins(){
   let m = {...MARGIN_DEFAULTS};
   try{ m = {...m, ...(JSON.parse(localStorage.getItem('bcMargins')) || {})}; }catch(e){}
-  MARGIN_KEYS.forEach(k => document.getElementById('m_'+k).value = clampMargin(m[k]));
+  MARGIN_KEYS.forEach(k => document.getElementById('m_'+k).value = clampMargin(k, m[k]));
   applyMargins(false);
 }
 
